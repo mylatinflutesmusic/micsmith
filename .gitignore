@@ -1,0 +1,13 @@
+build/
+build-mac/
+dist/
+MicSmith-*.zip
+tools/cmake/
+tools/gh/
+tools/*.zip
+tools/*.log
+JUCE/
+*.user
+*.sln
+*.vcxproj*
+.vs/

@@ -1,0 +1,94 @@
+name: Build macOS (10.13)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  JUCE_VERSION: 8.0.6
+
+  # Newer Xcode SDKs emit libc++ symbols that macOS 10.13-10.15 does not export,
+  # which leaves the plug-in unable to load on the very systems we target.
+  # Linking the C++ runtime classically avoids them. Set to "OFF" to build
+  # without the workaround.
+  LD_CLASSIC: "ON"
+
+jobs:
+  macos:
+    name: macOS x86_64 (deployment target 10.13)
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch JUCE ${{ env.JUCE_VERSION }}
+        run: |
+          if [ ! -d JUCE ]; then
+            git clone --depth 1 --branch "${JUCE_VERSION}" \
+              https://github.com/juce-framework/JUCE.git JUCE
+          fi
+          du -sh JUCE
+
+      - name: Toolchain shown for the log
+        run: |
+          sw_vers
+          xcodebuild -version
+          cmake --version | head -1
+
+      # The runner is Apple Silicon, but we build x86_64 binaries for High
+      # Sierra. Running them (the tests below) needs Rosetta.
+      - name: Ensure Rosetta
+        run: |
+          if [ "$(uname -m)" = "arm64" ]; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
+
+      - name: Build Audio Unit + VST3 + Standalone
+        run: |
+          chmod +x build_macos.sh install_macos.sh
+          MICSMITH_EXTRA_CMAKE_FLAGS="-DMICSMITH_LD_CLASSIC=${LD_CLASSIC}" \
+            ./build_macos.sh Release
+
+      - name: Check the deployment target really is 10.13
+        run: |
+          for f in \
+            "build-mac/MicSmith_artefacts/Release/VST3/MicSmith.vst3/Contents/MacOS/MicSmith" \
+            "build-mac/MicSmith_artefacts/Release/AU/MicSmith.component/Contents/MacOS/MicSmith"
+          do
+            echo "== $f"
+            vtool -show-build "$f" 2>/dev/null || otool -l "$f" | grep -A4 LC_BUILD_VERSION
+          done
+
+      - name: DSP tests
+        run: |
+          TEST_BIN="$(find build-mac -name MicSmithDSPTest -type f | head -1)"
+          echo "running $TEST_BIN"
+          "$TEST_BIN"
+
+      - name: Package plug-ins
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build-mac/MicSmith_artefacts/Release/VST3/MicSmith.vst3" \
+            "dist/MicSmith-VST3-macOS10.13-x86_64.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build-mac/MicSmith_artefacts/Release/AU/MicSmith.component" \
+            "dist/MicSmith-AU-macOS10.13-x86_64.zip"
+          ls -lh dist
+
+      - name: Upload plug-in artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MicSmith-macOS10.13-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # Runs after the artifacts are uploaded, so a host-mode problem shows up
+      # as a red run without costing you the build output.
+      - name: Host smoke test (VST3)
+        run: |
+          cmake --build build-mac --target MicSmithHostTest
+          HOST_BIN="$(find build-mac -name MicSmithHostTest -type f | head -1)"
+          "$HOST_BIN" "build-mac/MicSmith_artefacts/Release/VST3/MicSmith.vst3"
