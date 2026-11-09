@@ -19,6 +19,7 @@ jobs:
     name: Quell VST3 (x86_64, macOS 10.13)
     # Intel is required for a native x86_64 build that High Sierra can run.
     runs-on: macos-15-intel
+    timeout-minutes: 30
 
     env:
       JUCE_VERSION: 8.0.6
@@ -46,6 +47,28 @@ jobs:
         run: |
           chmod +x Quell/build-macos.sh
           ./Quell/build-macos.sh Release
+
+      - name: Host-load packaged VST3
+        run: |
+          SMOKE_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+          SMOKE_DIR="$(mktemp -d "$SMOKE_ROOT/quell-host-smoke.XXXXXX")"
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+
+          ditto -x -k \
+            "Quell/dist/Quell-VST3-macOS10.13-x86_64.zip" \
+            "$SMOKE_DIR"
+          test -d "$SMOKE_DIR/Quell.vst3"
+
+          cmake --build Quell/build-mac \
+            --parallel "$(sysctl -n hw.ncpu)" \
+            --target QuellHostTest
+
+          HOST_BIN="Quell/build-mac/QuellHostTest_artefacts/Release/QuellHostTest"
+          if [ ! -x "$HOST_BIN" ]; then
+            HOST_BIN="$(find Quell/build-mac -type f -name QuellHostTest | head -n 1)"
+          fi
+          test -x "$HOST_BIN"
+          "$HOST_BIN" "$SMOKE_DIR/Quell.vst3"
 
       - name: Upload VST3
         uses: actions/upload-artifact@v4

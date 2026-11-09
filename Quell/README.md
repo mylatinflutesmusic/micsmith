@@ -156,6 +156,29 @@ Mach-O architecture and minimum OS, and writes:
 Quell/dist/Quell-VST3-macOS10.13-x86_64.zip
 ```
 
+To install a downloaded zip for the current user:
+
+```bash
+cd Quell
+chmod +x install-macos.sh
+./install-macos.sh ~/Downloads/Quell-VST3-macOS10.13-x86_64.zip
+```
+
+The helper also accepts the zip downloaded from a GitHub Actions artifact,
+installs the bundle at `~/Library/Audio/Plug-Ins/VST3/Quell.vst3`, removes the
+quarantine attribute recursively, and ad-hoc signs it. Restart the DAW and
+rescan VST3 plug-ins afterwards.
+
+To install for all users instead:
+
+```bash
+./install-macos.sh --system ~/Downloads/Quell-VST3-macOS10.13-x86_64.zip
+```
+
+This writes to `/Library/Audio/Plug-Ins/VST3/Quell.vst3` and asks for
+administrator access with `sudo`. Run the helper as your normal user, not with
+`sudo`; it elevates only the install steps.
+
 The CMake project still defines AU and Standalone targets; use the CMake
 commands directly if you need those formats. The GitHub Actions workflow
 produces the same VST3 zip on an Intel macOS runner.
@@ -197,7 +220,8 @@ Quell\build\QuellHostTest_artefacts\Release\QuellHostTest.exe "Quell\build\Quell
 It verifies discovery, instantiation, all 13 parameters, the sidechain bus,
 reported latency, audio flow, that depth changes the audio, delta monitoring,
 mid/side and sidechain modes, user preset save/load/delete and persistence, the
-editor, and state serialisation.
+editor, and state serialisation. The macOS workflow extracts the packaged zip
+and runs this validation against the extracted VST3 before uploading it.
 
 **Real-mix default regression** (uses the current plugin defaults; fails if they
 remove more than 2 dB overall or 5 dB of 8–16 kHz energy):
