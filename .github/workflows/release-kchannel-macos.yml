@@ -1,0 +1,118 @@
+name: Release K Channel macOS VST3
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (must start with v, for example v1.0.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and publish K Channel VST3
+    # Intel is required for a native x86_64 build that High Sierra can run.
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+
+    env:
+      JUCE_VERSION: 8.0.6
+      KCHANNEL_LD_CLASSIC: "ON"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fetch JUCE ${{ env.JUCE_VERSION }}
+        run: |
+          if [ ! -d JUCE ]; then
+            git clone --depth 1 --branch "${JUCE_VERSION}" \
+              https://github.com/juce-framework/JUCE.git JUCE
+          fi
+          test -f JUCE/CMakeLists.txt
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          cmake --version | head -1
+          uname -m
+
+      - name: Build and package VST3
+        run: |
+          chmod +x KChannel/build-macos.sh
+          ./KChannel/build-macos.sh Release
+
+      - name: Verify deployment target and architecture
+        run: |
+          VST3="KChannel/build-mac/KChannel_artefacts/Release/VST3/K Channel.vst3"
+          BINARY="$VST3/Contents/MacOS/K Channel"
+          test -f "$BINARY"
+          echo "== lipo"
+          lipo -info "$BINARY"
+          echo "== build version"
+          vtool -show-build "$BINARY" 2>/dev/null || otool -l "$BINARY" | grep -A4 LC_BUILD_VERSION
+
+      - name: DSP tests
+        run: |
+          TEST_BIN="$(find KChannel/build-mac -type f -name KChannelDSPTest | head -n 1)"
+          test -x "$TEST_BIN"
+          "$TEST_BIN"
+
+      - name: Host-load the packaged VST3
+        run: |
+          SMOKE_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+          SMOKE_DIR="$(mktemp -d "$SMOKE_ROOT/kchannel-release-smoke.XXXXXX")"
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+
+          ditto -x -k \
+            "KChannel/dist/KChannel-VST3-macOS10.13-x86_64.zip" \
+            "$SMOKE_DIR"
+          test -d "$SMOKE_DIR/K Channel.vst3"
+
+          cmake --build KChannel/build-mac \
+            --parallel "$(sysctl -n hw.ncpu)" \
+            --target KChannelHostTest
+
+          HOST_BIN="$(find KChannel/build-mac -type f -name KChannelHostTest | head -n 1)"
+          test -x "$HOST_BIN"
+          "$HOST_BIN" "$SMOKE_DIR/K Channel.vst3"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KChannel-VST3-macOS10.13-x86_64
+          path: KChannel/dist/KChannel-VST3-macOS10.13-x86_64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ZIP="KChannel/dist/KChannel-VST3-macOS10.13-x86_64.zip"
+
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *)
+              echo "Release tag must start with v: $RELEASE_TAG" >&2
+              exit 1
+              ;;
+          esac
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ZIP" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$ZIP" \
+              --title "K Channel $RELEASE_TAG" \
+              --generate-notes \
+              --target "$GITHUB_SHA"
+          fi

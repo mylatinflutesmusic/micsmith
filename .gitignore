@@ -9,6 +9,9 @@ tools/gh/
 tools/*.zip
 tools/*.log
 JUCE/
+JUCE7/
+KChannel/build-vst2-*/
+KChannel/third_party/
 *.user
 *.sln
 *.vcxproj*
